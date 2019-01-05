@@ -26,6 +26,8 @@ android {
         abortOnError false
     }
 }
+def glide_v = '4.7.1'
+
 
 dependencies {
     implementation fileTree(include: ['*.jar'], dir: 'libs')
@@ -36,4 +38,7 @@ dependencies {
     androidTestImplementation 'com.android.support.test:runner:1.0.2'
     androidTestImplementation 'com.android.support.test.espresso:espresso-core:3.0.2'
     implementation project(':library')
-}
+    //glide
+    implementation "com.github.bumptech.glide:glide:${glide_v}"
+    annotationProcessor "com.github.bumptech.glide:compiler:${glide_v}"
+    kapt "com.github.bumptech.glide:compiler:${glide_v}"}

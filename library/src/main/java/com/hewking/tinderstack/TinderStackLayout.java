@@ -9,7 +9,6 @@ import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
 
-
 /**
  * Created by hewking on 2017/3/30.
  */
@@ -23,10 +22,43 @@ public class TinderStackLayout extends ViewGroup {
     private static final int DEFAULT_MARGIN = 10;//dp
     private static final int DEFAULT_DEGRESS = 20;//旋转的度数
 
+    private static final int DEFAULT_SHOW_COUNT = 4;
+
+    private int showCount = DEFAULT_SHOW_COUNT;
+
     private ViewDragHelper mDragHelper;
 
     private int mCenterX;
     private int mCenterY;
+
+    private BaseCardAdapter adapter;
+
+    private OnChooseListener chooseListener;
+
+    public OnChooseListener getChooseListener() {
+        return chooseListener;
+    }
+
+    public void setChooseListener(OnChooseListener chooseListener) {
+        this.chooseListener = chooseListener;
+    }
+
+    public BaseCardAdapter getAdapter() {
+        return adapter;
+    }
+
+    public void setAdapter(BaseCardAdapter adapter) {
+        this.adapter = adapter;
+        if (adapter != null){
+            int count = Math.min(adapter.getItemCount(),showCount);
+            if (count <= 0) {
+                return ;
+            }
+            for (int i = 0 ;i < count ; i++) {
+                addView(adapter.getView());
+            }
+        }
+    }
 
     private Point mReleasedPoint = new Point();
     private boolean isDraging = false;
@@ -48,6 +80,7 @@ public class TinderStackLayout extends ViewGroup {
         mDragHelper = ViewDragHelper.create(this, 1.0f, new ViewDragHelper.Callback() {
             @Override
             public boolean tryCaptureView(View child, int pointerId) {
+                // 最top 的view 可滑动
                 return indexOfChild(child) == getChildCount() - 1;
             }
 
@@ -64,20 +97,23 @@ public class TinderStackLayout extends ViewGroup {
             @Override
             public void onViewReleased(@NonNull final View releasedChild, float xvel, float yvel) {
                 L.d(TAG, "onViewReleased xvel : " + xvel + " yvel : " + yvel);
-
                 if (isDraging) {
                     mDragHelper.settleCapturedViewAt(mCenterX - releasedChild.getMeasuredWidth() / 2
                             , mCenterY - releasedChild.getMeasuredHeight() / 2);
                     invalidate();
                 } else {
                     if (mReleasedPoint.x != 0 && mReleasedPoint.y != 0) {
-                        final float sloap = mReleasedPoint.x / mReleasedPoint.y;
+                        final float sloap = mReleasedPoint.y / (mReleasedPoint.x * 1.0f);
                         if (Math.abs(mReleasedPoint.x) > getMeasuredWidth() / 3 && Math.abs(sloap) > 0.15) {
                             mDragHelper.smoothSlideViewTo(releasedChild, getMeasuredWidth(), (int) (getMeasuredWidth() * sloap));
+
+                            onChoosePick(sloap);
+
                             invalidate();
                             mReleasedPoint.x = 0;
                             mReleasedPoint.y = 0;
                             removeView(releasedChild);
+                            onAddView();
                         }
                     }
                 }
@@ -88,6 +124,7 @@ public class TinderStackLayout extends ViewGroup {
                 L.d(TAG, "onViewPositionChanged left : " + left + " top : " + top + " dx : " + dx + "dy : " + dy);
                 //斜率，有方向
                 float sloap = top * 1.0f / left;
+                // top view 滑动的距离超过 宽度的三分之一，并且斜率 大于0.15 可以视为触发选择事件
                 if (Math.abs(left) > getMeasuredWidth() / 3 && Math.abs(sloap) > 0.15) {
                     mReleasedPoint.x = left;
                     mReleasedPoint.y = top;
@@ -96,16 +133,20 @@ public class TinderStackLayout extends ViewGroup {
                     // 调整剩下view的大小和位置
                     ensureChildView();
                     isDraging = true;
-                    // 旋转,根据现在的比例
-//                    changedView.setRotation(DEFAULT_DEGRESS * );
                     // 剩下的子view，缩放 平移,-2 未考虑只有一个view 的情况，还有visibilty= gone
                     float rate = left * 1.0f / (getMeasuredWidth() / 3);
                     float a = Math.min(1, Math.max(0, Math.abs(rate)));
                     int offset = ViewExKt.dp2px(TinderStackLayout.this, DEFAULT_OFFSET);
-                    for (int i = getChildCount() < 4 ? 0 : 1; i < getChildCount() - 1; i++) {
+                    // 这里为什么会有判断 i = 0，i= 1，是因为如果释放了会把view remove
+                    // 所以这里会做判断保证布局底部的显示，从1开始最底部view 不会有变化
+                    for (int i = getChildCount() < showCount ? 0 : 1; i < getChildCount() - 1; i++) {
                         View child = getChildAt(i);
+                        // ds 代表缩放，分为两部分计算 + 号前面是布局的时候应该缩放多少，后段是跟随滑动
+                        // 缩放的变化量
                         float ds = 1 - DEFAULT_SCALE * (getChildCount() - 1 - i) + DEFAULT_SCALE * a;
+                        // 同根据布局时固定的的偏移量 - 变化量
                         float doffset = (getChildCount() - 1 - i) * offset - offset * a;
+                        // 同布局时缩放的偏移量 - 变化量
                         float yOffset = child.getMeasuredHeight() * DEFAULT_SCALE * (getChildCount() - 1 - i - a) / 2;
                         child.setScaleY(ds);
                         child.setScaleX(ds);
@@ -115,7 +156,9 @@ public class TinderStackLayout extends ViewGroup {
                     }
 
                     //rate > 0  右滑动 else  // 左滑动
-                        changedView.setRotation(rate * DEFAULT_DEGRESS);
+                    // 旋转,根据现在的比例
+                    L.d(TAG,"onViewPositionChange rate : " + rate);
+                    changedView.setRotation(rate * DEFAULT_DEGRESS);
                 }
             }
 
@@ -137,10 +180,21 @@ public class TinderStackLayout extends ViewGroup {
             @Override
             public void onViewDragStateChanged(int state) {
                 super.onViewDragStateChanged(state);
+                // 停止滑动的时候，将最后一个view 角度设置为0，因为算斜率的
+                // 的方式最后滑动完成会有微小的偏差
+                if (state == ViewDragHelper.STATE_IDLE && isDraging) {
+                    View childTop = getChildAt(getChildCount() - 1);
+                    if (childTop != null) {
+                        childTop.setRotation(0);
+                    }
+                }
             }
         });
     }
 
+    /**
+     * 确保有足够的view 符合条件
+     */
     private void ensureChildView() {
 
     }
@@ -167,7 +221,8 @@ public class TinderStackLayout extends ViewGroup {
             child.setScaleX(scaleValue);
             child.setScaleY(scaleValue);
 
-            if (i > 1 || getChildCount() < 4) {
+            // i > 1 是因为确保最后两个view是重叠在一起
+            if (i > 1 || getChildCount() < showCount) {
                 level++;
             }
         }
@@ -177,7 +232,7 @@ public class TinderStackLayout extends ViewGroup {
     protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
         super.onMeasure(widthMeasureSpec, heightMeasureSpec);
         measureChildren(widthMeasureSpec, heightMeasureSpec);
-        int margin = ViewExKt.dp2px(this, DEFAULT_MARGIN);
+//        int margin = ViewExKt.dp2px(this, DEFAULT_MARGIN);
 
     }
 
@@ -210,5 +265,31 @@ public class TinderStackLayout extends ViewGroup {
         if (mDragHelper.continueSettling(true)) {
             postInvalidate();
         }
+    }
+
+    private void onAddView() {
+        if (adapter != null) {
+            if (adapter.getView() == null) {
+                return;
+            }
+            addView(adapter.getView(),0);
+        }
+    }
+
+    private void onChoosePick(float sloap) {
+        if (chooseListener != null) {
+            chooseListener.onPicked(sloap > 0 ? 1 : 0);
+        }
+    }
+
+    public interface BaseCardAdapter {
+        int getItemCount();
+
+        View getView();
+    }
+
+    public interface OnChooseListener{
+        // 1 为右边滑动 0 为左边滑动
+        void onPicked(int directon);
     }
 }
